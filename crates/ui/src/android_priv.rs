@@ -54,10 +54,48 @@ fn native_daemon_path() -> jni::errors::Result<PathBuf> {
     Ok(PathBuf::from(dir).join(BUNDLED_DAEMON_SO_NAME))
 }
 
+/// The app's own private, writable storage (`/data/data/<pkg>/files`) --
+/// unlike a conventional `$HOME`, which Android doesn't set, this is
+/// guaranteed writable by the app's own uid. Passed to the daemon as
+/// `POCKETSERVER_STATE_DIR` so it doesn't fall back to resolving a config
+/// dir under a `$HOME` of `/`, which is read-only and made every
+/// state-saving request 500 (found by actually testing this on a device,
+/// not assumed).
+fn app_files_dir() -> jni::errors::Result<PathBuf> {
+    let ctx = ndk_context::android_context();
+    let vm = unsafe { JavaVM::from_raw(ctx.vm().cast()) }?;
+    let mut env = vm.attach_current_thread()?;
+    let activity = unsafe { JObject::from_raw(ctx.context().cast()) };
+
+    let files_dir_obj = env
+        .call_method(&activity, "getFilesDir", "()Ljava/io/File;", &[])?
+        .l()?;
+    let path_obj = env
+        .call_method(
+            &files_dir_obj,
+            "getAbsolutePath",
+            "()Ljava/lang/String;",
+            &[],
+        )?
+        .l()?;
+    let path_jstring = JString::from(path_obj);
+    let path: String = env.get_string(&path_jstring)?.into();
+
+    Ok(PathBuf::from(path))
+}
+
 fn spawn_bundled_daemon() -> anyhow::Result<Child> {
     let path = native_daemon_path().map_err(|e| anyhow::anyhow!("resolving daemon path: {e:?}"))?;
-    Command::new(&path)
-        .spawn()
+    let mut cmd = Command::new(&path);
+    match app_files_dir() {
+        Ok(dir) => {
+            cmd.env("POCKETSERVER_STATE_DIR", dir.join("pocketserver-state"));
+        }
+        Err(e) => {
+            log::warn!("could not resolve app files dir, state persistence may fail: {e:?}")
+        }
+    }
+    cmd.spawn()
         .map_err(|e| anyhow::anyhow!("spawning {}: {e}", path.display()))
 }
 

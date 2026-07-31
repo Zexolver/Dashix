@@ -127,7 +127,18 @@ pub struct AppStateInner {
 
 pub type AppState = Arc<RwLock<AppStateInner>>;
 
+/// `directories::ProjectDirs` falls back to XDG's `$HOME/.config` when it
+/// can't otherwise resolve a config dir -- fine on desktop Linux, but
+/// Android apps have no conventional `$HOME`, so this silently resolved to
+/// `/.config/pocketserver` (unwritable: `/` is read-only, even for root)
+/// and every state-saving request 500'd. On Android, the UI passes its
+/// own writable private data directory through this env var when it spawns
+/// the bundled daemon (see crates/ui/src/android_priv.rs); desktop usage
+/// is unaffected since nothing sets it there.
 pub fn state_dir() -> PathBuf {
+    if let Ok(dir) = std::env::var("POCKETSERVER_STATE_DIR") {
+        return PathBuf::from(dir);
+    }
     directories::ProjectDirs::from("com", "zexolver", "pocketserver")
         .map(|dirs| dirs.config_dir().to_path_buf())
         .unwrap_or_else(|| PathBuf::from(".pocketserver"))

@@ -6,7 +6,7 @@ on:
       - "v*"
 
 jobs:
-  build:
+  linux:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -44,3 +44,74 @@ jobs:
 
       - name: Test
         run: cargo test --workspace
+
+  android:
+    runs-on: ubuntu-latest
+    env:
+      NDK_VERSION: r27c
+      # Vendoring the SDK/NDK ourselves (rather than relying on whatever
+      # happens to be preinstalled on the runner image) so this build
+      # doesn't silently start failing, or silently start using a
+      # different NDK/SDK version than what's actually been verified to
+      # work here, if the runner image changes.
+      ANDROID_HOME: ${{ github.workspace }}/.android-sdk
+      ANDROID_NDK_ROOT: ${{ github.workspace }}/.android-sdk/ndk/r27c
+      ANDROID_BUILD_TOOLS_VERSION: "35.0.0"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-android-arm64
+
+      - name: Install Android NDK
+        run: |
+          curl -sS -o /tmp/ndk.zip "https://dl.google.com/android/repository/android-ndk-${NDK_VERSION}-linux.zip"
+          mkdir -p "$(dirname "$ANDROID_NDK_ROOT")"
+          unzip -q /tmp/ndk.zip -d "$(dirname "$ANDROID_NDK_ROOT")"
+          mv "$(dirname "$ANDROID_NDK_ROOT")/android-ndk-${NDK_VERSION}" "$ANDROID_NDK_ROOT"
+          rm /tmp/ndk.zip
+
+      - name: Install Android SDK platform + build-tools
+        run: |
+          curl -sS -o /tmp/cmdtools.zip "https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip"
+          mkdir -p "$ANDROID_HOME/cmdline-tools"
+          unzip -q /tmp/cmdtools.zip -d "$ANDROID_HOME/cmdline-tools"
+          mv "$ANDROID_HOME/cmdline-tools/cmdline-tools" "$ANDROID_HOME/cmdline-tools/latest"
+          rm /tmp/cmdtools.zip
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$ANDROID_HOME" \
+            "platforms;android-34" "platforms;android-30" "build-tools;${ANDROID_BUILD_TOOLS_VERSION}" "platform-tools"
+
+      - name: Install cargo-apk
+        run: cargo install cargo-apk
+
+      # The pocketserver-daemon binary ships separately from the APK (it's
+      # a standalone process the app launches via su/Shizuku, not a JNI
+      # library) -- see src/android_priv.rs.
+      - name: Build daemon binary
+        run: cargo build -p pocketserver-daemon --target aarch64-linux-android --release
+
+      # Debug-signed (cargo-apk auto-generates a debug keystore) rather
+      # than a Play Store release build -- this is for installing on a
+      # device to try it, not distribution. `--release` Rust code was
+      # verified separately to compile and link cleanly for this target;
+      # cargo-apk itself then refuses to package a --release APK without a
+      # `[package.metadata.android.signing.release]` keystore, correctly
+      # so. Wiring up real release signing is future work for whenever
+      # actual distribution, not just testing, is the goal.
+      - name: Build APK
+        run: cargo apk build -p pocketserver-ui --target aarch64-linux-android --lib
+
+      - name: Package
+        run: |
+          mkdir -p dist
+          cp target/debug/apk/pocketserver-ui.apk dist/pocketserver-android-arm64.apk
+          cp target/aarch64-linux-android/release/pocketserver-daemon dist/pocketserver-daemon-android-arm64
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pocketserver-android-arm64
+          path: dist/*

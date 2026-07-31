@@ -37,6 +37,12 @@ export component MainWindow inherits Window {
 
     in-out property <string> status-line: "";
 
+    // On Android 12+ this gets overwritten at startup with the device's
+    // Material You wallpaper-derived accent color (see
+    // src/android_colors.rs); this default is what desktop and older
+    // Android show instead.
+    in-out property <color> dynamic-accent: #b3261e;
+
     // Gateway
     in-out property <[InterfaceInfo]> interfaces: [];
     in-out property <[string]> interface-names: [];
@@ -83,6 +89,11 @@ export component MainWindow inherits Window {
 
     VerticalBox {
         padding: 12px;
+
+        Rectangle {
+            height: 4px;
+            background: root.dynamic-accent;
+        }
 
         Text {
             text: root.status-line;

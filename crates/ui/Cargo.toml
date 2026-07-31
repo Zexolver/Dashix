@@ -4,6 +4,9 @@ version.workspace = true
 edition.workspace = true
 build = "build.rs"
 
+[lib]
+crate-type = ["lib", "cdylib"]
+
 [[bin]]
 name = "pocketserver-ui"
 path = "src/main.rs"
@@ -16,6 +19,28 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 uuid = { version = "1", features = ["v4"] }
 anyhow = "1"
+log = "0.4"
+
+# Slint's Android integration is its own backend, selected via this feature
+# (see src/lib.rs's `android_main`, gated on target_os = "android", and
+# https://docs.rs/slint/latest/slint/android/index.html) rather than the
+# desktop winit backend the base `slint` dependency above pulls in by
+# default. Additive, not a replacement: Cargo unions features across
+# dependency edges for the matching target.
+[target.'cfg(target_os = "android")'.dependencies]
+slint = { version = "1.17", features = ["backend-android-activity-06"] }
+jni = "0.21"
+ndk-context = "0.1"
+android_logger = "0.14"
 
 [build-dependencies]
 slint-build = "1.17"
+
+[package.metadata.android]
+package = "com.zexolver.pocketserver"
+apk_label = "PocketServer"
+target_sdk_version = 34
+min_sdk_version = 26
+
+[[package.metadata.android.uses_permission]]
+name = "android.permission.INTERNET"

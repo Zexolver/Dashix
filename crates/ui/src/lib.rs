@@ -32,9 +32,26 @@ pub fn run() {
     let client = Client::new();
 
     #[cfg(target_os = "android")]
-    android_colors::apply_dynamic_colors(&ui);
-    #[cfg(target_os = "android")]
-    android_priv::ensure_daemon_running();
+    {
+        android_colors::apply_dynamic_colors(&ui);
+        ui.global::<AppState>().set_is_android(true);
+        let status = android_priv::ensure_daemon_running();
+        ui.global::<AppState>()
+            .set_daemon_status_text(status.into());
+    }
+
+    #[cfg_attr(not(target_os = "android"), allow(unused_variables))]
+    let ui_weak_for_daemon = ui.as_weak();
+    ui.global::<AppState>().on_start_daemon(move || {
+        #[cfg(target_os = "android")]
+        {
+            let status = android_priv::ensure_daemon_running();
+            if let Some(ui) = ui_weak_for_daemon.upgrade() {
+                ui.global::<AppState>()
+                    .set_daemon_status_text(status.into());
+            }
+        }
+    });
 
     load_everything(ui.as_weak(), client.clone());
 
@@ -61,7 +78,7 @@ fn set_status(ui_weak: &Weak<MainWindow>, text: String) {
     let ui_weak = ui_weak.clone();
     let _ = slint::invoke_from_event_loop(move || {
         if let Some(ui) = ui_weak.upgrade() {
-            ui.set_status_line(text.into());
+            ui.global::<AppState>().set_status_line(text.into());
         }
     });
 }
@@ -81,17 +98,22 @@ fn load_everything(ui_weak: Weak<MainWindow>, client: Client) {
         let _ = ui_weak.upgrade_in_event_loop(move |ui| {
             match interfaces {
                 Ok(list) => apply_interfaces(&ui, list),
-                Err(e) => ui.set_status_line(format!("interfaces: {e}").into()),
+                Err(e) => ui
+                    .global::<AppState>()
+                    .set_status_line(format!("interfaces: {e}").into()),
             }
             if let Ok(cfg) = dynv6 {
                 apply_dynv6_config(&ui, cfg);
             }
             if let Ok(statuses) = dynv6_status {
-                ui.set_dynv6_status_text(format_dynv6_status(&statuses).into());
+                ui.global::<AppState>()
+                    .set_dynv6_status_text(format_dynv6_status(&statuses).into());
             }
             match routes {
                 Ok(list) => apply_routes(&ui, list),
-                Err(e) => ui.set_status_line(format!("routes: {e}").into()),
+                Err(e) => ui
+                    .global::<AppState>()
+                    .set_status_line(format!("routes: {e}").into()),
             }
             if let Ok(cfg) = security {
                 apply_security(&ui, cfg);
@@ -114,15 +136,20 @@ fn apply_interfaces(ui: &MainWindow, list: Vec<api_client::InterfaceDto>) {
             ipv6: i.ipv6.join(", ").into(),
         })
         .collect();
-    ui.set_interfaces(ModelRc::new(VecModel::from(rows)));
-    ui.set_interface_names(ModelRc::new(VecModel::from(names)));
+    ui.global::<AppState>()
+        .set_interfaces(ModelRc::new(VecModel::from(rows)));
+    ui.global::<AppState>()
+        .set_interface_names(ModelRc::new(VecModel::from(names)));
 }
 
 fn apply_dynv6_config(ui: &MainWindow, cfg: Dynv6ConfigDto) {
-    ui.set_dynv6_enabled(cfg.enabled);
-    ui.set_dynv6_token(cfg.token.unwrap_or_default().into());
-    ui.set_dynv6_interface(cfg.interface.unwrap_or_default().into());
-    ui.set_dynv6_domains_text(cfg.domains.join(", ").into());
+    ui.global::<AppState>().set_dynv6_enabled(cfg.enabled);
+    ui.global::<AppState>()
+        .set_dynv6_token(cfg.token.unwrap_or_default().into());
+    ui.global::<AppState>()
+        .set_dynv6_interface(cfg.interface.unwrap_or_default().into());
+    ui.global::<AppState>()
+        .set_dynv6_domains_text(cfg.domains.join(", ").into());
 }
 
 fn format_dynv6_status(statuses: &[api_client::Dynv6StatusDto]) -> String {
@@ -167,7 +194,8 @@ fn apply_routes(ui: &MainWindow, list: Vec<api_client::RouteDto>) {
             },
         })
         .collect();
-    ui.set_routes(ModelRc::new(VecModel::from(rows)));
+    ui.global::<AppState>()
+        .set_routes(ModelRc::new(VecModel::from(rows)));
 }
 
 fn apply_security(ui: &MainWindow, cfg: SecurityConfigDto) {
@@ -182,12 +210,15 @@ fn apply_security(ui: &MainWindow, cfg: SecurityConfigDto) {
             upstream_port: r.upstream_port as i32,
         })
         .collect();
-    ui.set_l4_rules(ModelRc::new(VecModel::from(rows)));
-    ui.set_blocked_ips_text(cfg.blocked_ips.join(", ").into());
+    ui.global::<AppState>()
+        .set_l4_rules(ModelRc::new(VecModel::from(rows)));
+    ui.global::<AppState>()
+        .set_blocked_ips_text(cfg.blocked_ips.join(", ").into());
 }
 
 fn apply_mail(ui: &MainWindow, cfg: MailConfigDto) {
-    ui.set_mail_domain(cfg.domain.unwrap_or_default().into());
+    ui.global::<AppState>()
+        .set_mail_domain(cfg.domain.unwrap_or_default().into());
     let rows: Vec<MailAccountRow> = cfg
         .accounts
         .into_iter()
@@ -196,7 +227,8 @@ fn apply_mail(ui: &MainWindow, cfg: MailConfigDto) {
             display_name: a.display_name.into(),
         })
         .collect();
-    ui.set_mail_accounts(ModelRc::new(VecModel::from(rows)));
+    ui.global::<AppState>()
+        .set_mail_accounts(ModelRc::new(VecModel::from(rows)));
 }
 
 fn split_csv(text: &str) -> Vec<String> {
@@ -209,7 +241,7 @@ fn split_csv(text: &str) -> Vec<String> {
 fn register_gateway_callbacks(ui: &MainWindow, client: Client) {
     let ui_weak = ui.as_weak();
     let c = client.clone();
-    ui.on_refresh_interfaces(move || {
+    ui.global::<AppState>().on_refresh_interfaces(move || {
         let ui_weak = ui_weak.clone();
         let c = c.clone();
         tokio::spawn(async move {
@@ -224,13 +256,13 @@ fn register_gateway_callbacks(ui: &MainWindow, client: Client) {
 
     let ui_weak = ui.as_weak();
     let c = client.clone();
-    ui.on_save_dynv6(move || {
+    ui.global::<AppState>().on_save_dynv6(move || {
         let Some(ui) = ui_weak.upgrade() else { return };
         let cfg = Dynv6ConfigDto {
-            enabled: ui.get_dynv6_enabled(),
-            token: non_empty(ui.get_dynv6_token().to_string()),
-            interface: non_empty(ui.get_dynv6_interface().to_string()),
-            domains: split_csv(&ui.get_dynv6_domains_text()),
+            enabled: ui.global::<AppState>().get_dynv6_enabled(),
+            token: non_empty(ui.global::<AppState>().get_dynv6_token().to_string()),
+            interface: non_empty(ui.global::<AppState>().get_dynv6_interface().to_string()),
+            domains: split_csv(&ui.global::<AppState>().get_dynv6_domains_text()),
         };
         let ui_weak = ui_weak.clone();
         let c = c.clone();
@@ -244,7 +276,7 @@ fn register_gateway_callbacks(ui: &MainWindow, client: Client) {
 
     let ui_weak = ui.as_weak();
     let c = client.clone();
-    ui.on_sync_dynv6_now(move || {
+    ui.global::<AppState>().on_sync_dynv6_now(move || {
         let ui_weak = ui_weak.clone();
         let c = c.clone();
         tokio::spawn(async move {
@@ -252,7 +284,7 @@ fn register_gateway_callbacks(ui: &MainWindow, client: Client) {
                 Ok(statuses) => {
                     let text = format_dynv6_status(&statuses);
                     let _ = ui_weak.upgrade_in_event_loop(move |ui| {
-                        ui.set_dynv6_status_text(text.into());
+                        ui.global::<AppState>().set_dynv6_status_text(text.into());
                     });
                 }
                 Err(e) => set_status(&ui_weak, format!("sync failed: {e}")),
@@ -264,27 +296,27 @@ fn register_gateway_callbacks(ui: &MainWindow, client: Client) {
 fn register_router_callbacks(ui: &MainWindow, client: Client) {
     let ui_weak = ui.as_weak();
     let c = client.clone();
-    ui.on_add_route(move || {
+    ui.global::<AppState>().on_add_route(move || {
         let Some(ui) = ui_weak.upgrade() else { return };
-        let subdomain = ui.get_new_subdomain().to_string();
+        let subdomain = ui.global::<AppState>().get_new_subdomain().to_string();
         if subdomain.is_empty() {
             set_status(&ui_weak, "subdomain is required".into());
             return;
         }
-        let target = if ui.get_new_is_static() {
+        let target = if ui.global::<AppState>().get_new_is_static() {
             RouteTargetDto::Static {
-                path: ui.get_new_path().to_string(),
+                path: ui.global::<AppState>().get_new_path().to_string(),
                 hot_reload: true,
             }
         } else {
             RouteTargetDto::Port {
-                port: ui.get_new_port() as u16,
+                port: ui.global::<AppState>().get_new_port() as u16,
             }
         };
         let req = NewRouteDto {
             subdomain,
             target,
-            tls: ui.get_new_tls(),
+            tls: ui.global::<AppState>().get_new_tls(),
         };
 
         let ui_weak = ui_weak.clone();
@@ -304,7 +336,7 @@ fn register_router_callbacks(ui: &MainWindow, client: Client) {
 
     let ui_weak = ui.as_weak();
     let c = client.clone();
-    ui.on_delete_route(move |id| {
+    ui.global::<AppState>().on_delete_route(move |id| {
         let id = id.to_string();
         let ui_weak = ui_weak.clone();
         let c = c.clone();
@@ -323,7 +355,7 @@ fn register_router_callbacks(ui: &MainWindow, client: Client) {
 
     let ui_weak = ui.as_weak();
     let c = client.clone();
-    ui.on_apply(move || {
+    ui.global::<AppState>().on_apply(move || {
         let ui_weak = ui_weak.clone();
         let c = c.clone();
         tokio::spawn(async move {
@@ -340,9 +372,9 @@ fn register_router_callbacks(ui: &MainWindow, client: Client) {
 
 fn register_security_callbacks(ui: &MainWindow, client: Client) {
     let ui_weak = ui.as_weak();
-    ui.on_add_l4_rule(move || {
+    ui.global::<AppState>().on_add_l4_rule(move || {
         let Some(ui) = ui_weak.upgrade() else { return };
-        let name = ui.get_new_l4_name().to_string();
+        let name = ui.global::<AppState>().get_new_l4_name().to_string();
         if name.is_empty() {
             set_status(&ui_weak, "rule name is required".into());
             return;
@@ -350,28 +382,36 @@ fn register_security_callbacks(ui: &MainWindow, client: Client) {
         let row = L4RuleRow {
             id: uuid::Uuid::new_v4().to_string().into(),
             name: name.into(),
-            is_udp: ui.get_new_l4_udp(),
-            listen_port: ui.get_new_l4_listen_port(),
-            upstream_port: ui.get_new_l4_upstream_port(),
+            is_udp: ui.global::<AppState>().get_new_l4_udp(),
+            listen_port: ui.global::<AppState>().get_new_l4_listen_port(),
+            upstream_port: ui.global::<AppState>().get_new_l4_upstream_port(),
         };
-        let mut rows: Vec<L4RuleRow> = ui.get_l4_rules().iter().collect();
+        let mut rows: Vec<L4RuleRow> = ui.global::<AppState>().get_l4_rules().iter().collect();
         rows.push(row);
-        ui.set_l4_rules(ModelRc::new(VecModel::from(rows)));
-        ui.set_new_l4_name("".into());
+        ui.global::<AppState>()
+            .set_l4_rules(ModelRc::new(VecModel::from(rows)));
+        ui.global::<AppState>().set_new_l4_name("".into());
     });
 
     let ui_weak = ui.as_weak();
-    ui.on_delete_l4_rule(move |id| {
+    ui.global::<AppState>().on_delete_l4_rule(move |id| {
         let Some(ui) = ui_weak.upgrade() else { return };
-        let rows: Vec<L4RuleRow> = ui.get_l4_rules().iter().filter(|r| r.id != id).collect();
-        ui.set_l4_rules(ModelRc::new(VecModel::from(rows)));
+        let rows: Vec<L4RuleRow> = ui
+            .global::<AppState>()
+            .get_l4_rules()
+            .iter()
+            .filter(|r| r.id != id)
+            .collect();
+        ui.global::<AppState>()
+            .set_l4_rules(ModelRc::new(VecModel::from(rows)));
     });
 
     let ui_weak = ui.as_weak();
     let c = client.clone();
-    ui.on_save_security(move || {
+    ui.global::<AppState>().on_save_security(move || {
         let Some(ui) = ui_weak.upgrade() else { return };
         let l4_rules = ui
+            .global::<AppState>()
             .get_l4_rules()
             .iter()
             .map(|r| api_client::L4RuleDto {
@@ -384,7 +424,7 @@ fn register_security_callbacks(ui: &MainWindow, client: Client) {
             .collect();
         let cfg = SecurityConfigDto {
             l4_rules,
-            blocked_ips: split_csv(&ui.get_blocked_ips_text()),
+            blocked_ips: split_csv(&ui.global::<AppState>().get_blocked_ips_text()),
         };
         let ui_weak = ui_weak.clone();
         let c = c.clone();
@@ -399,40 +439,46 @@ fn register_security_callbacks(ui: &MainWindow, client: Client) {
 
 fn register_mail_callbacks(ui: &MainWindow, client: Client) {
     let ui_weak = ui.as_weak();
-    ui.on_add_mail_account(move || {
+    ui.global::<AppState>().on_add_mail_account(move || {
         let Some(ui) = ui_weak.upgrade() else { return };
-        let address = ui.get_new_mail_address().to_string();
+        let address = ui.global::<AppState>().get_new_mail_address().to_string();
         if address.is_empty() {
             set_status(&ui_weak, "address is required".into());
             return;
         }
         let row = MailAccountRow {
             address: address.into(),
-            display_name: ui.get_new_mail_display_name(),
+            display_name: ui.global::<AppState>().get_new_mail_display_name(),
         };
-        let mut rows: Vec<MailAccountRow> = ui.get_mail_accounts().iter().collect();
+        let mut rows: Vec<MailAccountRow> =
+            ui.global::<AppState>().get_mail_accounts().iter().collect();
         rows.push(row);
-        ui.set_mail_accounts(ModelRc::new(VecModel::from(rows)));
-        ui.set_new_mail_address("".into());
-        ui.set_new_mail_display_name("".into());
+        ui.global::<AppState>()
+            .set_mail_accounts(ModelRc::new(VecModel::from(rows)));
+        ui.global::<AppState>().set_new_mail_address("".into());
+        ui.global::<AppState>().set_new_mail_display_name("".into());
     });
 
     let ui_weak = ui.as_weak();
-    ui.on_delete_mail_account(move |address| {
-        let Some(ui) = ui_weak.upgrade() else { return };
-        let rows: Vec<MailAccountRow> = ui
-            .get_mail_accounts()
-            .iter()
-            .filter(|a| a.address != address)
-            .collect();
-        ui.set_mail_accounts(ModelRc::new(VecModel::from(rows)));
-    });
+    ui.global::<AppState>()
+        .on_delete_mail_account(move |address| {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            let rows: Vec<MailAccountRow> = ui
+                .global::<AppState>()
+                .get_mail_accounts()
+                .iter()
+                .filter(|a| a.address != address)
+                .collect();
+            ui.global::<AppState>()
+                .set_mail_accounts(ModelRc::new(VecModel::from(rows)));
+        });
 
     let ui_weak = ui.as_weak();
     let c = client.clone();
-    ui.on_save_mail(move || {
+    ui.global::<AppState>().on_save_mail(move || {
         let Some(ui) = ui_weak.upgrade() else { return };
         let accounts = ui
+            .global::<AppState>()
             .get_mail_accounts()
             .iter()
             .map(|a| MailAccountDto {
@@ -441,7 +487,7 @@ fn register_mail_callbacks(ui: &MainWindow, client: Client) {
             })
             .collect();
         let cfg = MailConfigDto {
-            domain: non_empty(ui.get_mail_domain().to_string()),
+            domain: non_empty(ui.global::<AppState>().get_mail_domain().to_string()),
             accounts,
         };
         let ui_weak = ui_weak.clone();

@@ -6,9 +6,9 @@
 
 use jni::objects::{JObject, JValue};
 use jni::JavaVM;
-use slint::Color;
+use slint::{Color, ComponentHandle};
 
-use crate::MainWindow;
+use crate::{AppState, MainWindow};
 
 pub fn apply_dynamic_colors(ui: &MainWindow) {
     match try_apply(ui) {
@@ -45,7 +45,7 @@ fn try_apply(ui: &MainWindow) -> jni::errors::Result<bool> {
         (argb >> 8) as u8,
         argb as u8,
     );
-    ui.set_dynamic_accent(color);
+    ui.global::<AppState>().set_dynamic_accent(color);
     Ok(true)
 }
 

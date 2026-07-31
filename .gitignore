@@ -1,3 +1,8 @@
 /target
 **/*.rs.bk
 .DS_Store
+
+# Staging area cargo-apk's `runtime_libs` copies from -- populated at build
+# time by copying the built pocketserver-daemon binary in here (see
+# crates/ui/Cargo.toml's runtime_libs comment and the CI android job).
+/crates/ui/runtime-libs/

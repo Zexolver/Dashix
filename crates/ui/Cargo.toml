@@ -41,6 +41,15 @@ package = "com.zexolver.pocketserver"
 apk_label = "PocketServer"
 target_sdk_version = 34
 min_sdk_version = 26
+# pocketserver-daemon is bundled as runtime-libs/arm64-v8a/libpocketserver_daemon.so
+# (a plain ELF executable renamed to look like a shared library -- see
+# src/android_priv.rs for why) rather than shipped separately; extractNativeLibs
+# has to stay true so it exists as a real file on disk at nativeLibraryDir that
+# can be exec'd, instead of only being mmap-able straight out of the APK zip.
+runtime_libs = "runtime-libs"
+
+[package.metadata.android.application]
+extract_native_libs = true
 
 [[package.metadata.android.uses_permission]]
 name = "android.permission.INTERNET"

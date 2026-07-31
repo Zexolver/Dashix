@@ -96,19 +96,27 @@ jobs:
       - name: Install cargo-apk
         run: cargo install cargo-apk
 
-      # The pocketserver-daemon binary ships separately from the APK (it's
-      # a standalone process the app launches via su/Shizuku, not a JNI
-      # library) -- see src/android_priv.rs. Unlike `cargo apk build`
-      # (which configures the NDK toolchain for us), a plain `cargo build`
-      # needs these pointed at the NDK's clang wrapper explicitly.
-      - name: Build daemon binary
+      # pocketserver-daemon is bundled *inside* the APK (see
+      # crates/ui/Cargo.toml's `runtime_libs` and src/android_priv.rs for
+      # why) rather than distributed as a separate download the user has
+      # to adb push themselves. cargo-apk's `runtime_libs` just copies
+      # whatever's already sitting in crates/ui/runtime-libs/<abi>/, so
+      # the daemon has to be built and staged there before `cargo apk
+      # build` runs. Unlike `cargo apk build` (which configures the NDK
+      # toolchain for us), this plain `cargo build` needs it pointed at
+      # the NDK's clang wrapper explicitly.
+      - name: Build and stage daemon binary
         env:
           CC_aarch64_linux_android: ${{ github.workspace }}/.android-sdk/ndk/r27c/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android26-clang
           CXX_aarch64_linux_android: ${{ github.workspace }}/.android-sdk/ndk/r27c/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android26-clang++
           AR_aarch64_linux_android: ${{ github.workspace }}/.android-sdk/ndk/r27c/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar
           CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER: ${{ github.workspace }}/.android-sdk/ndk/r27c/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android26-clang
           CARGO_TARGET_AARCH64_LINUX_ANDROID_AR: ${{ github.workspace }}/.android-sdk/ndk/r27c/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar
-        run: cargo build -p pocketserver-daemon --target aarch64-linux-android --release
+        run: |
+          cargo build -p pocketserver-daemon --target aarch64-linux-android --release
+          mkdir -p crates/ui/runtime-libs/arm64-v8a
+          cp target/aarch64-linux-android/release/pocketserver-daemon \
+            crates/ui/runtime-libs/arm64-v8a/libpocketserver_daemon.so
 
       # Debug-signed (cargo-apk auto-generates a debug keystore) rather
       # than a Play Store release build -- this is for installing on a
@@ -125,7 +133,6 @@ jobs:
         run: |
           mkdir -p dist
           cp target/debug/apk/pocketserver-ui.apk dist/pocketserver-android-arm64.apk
-          cp target/aarch64-linux-android/release/pocketserver-daemon dist/pocketserver-daemon-android-arm64
 
       - uses: actions/upload-artifact@v4
         with:

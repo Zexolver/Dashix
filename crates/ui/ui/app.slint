@@ -1,4 +1,4 @@
-import { Button, CheckBox, ComboBox, GroupBox, LineEdit, ScrollView, SpinBox, TabWidget, VerticalBox, HorizontalBox } from "std-widgets.slint";
+import { Button, CheckBox, ComboBox, LineEdit, ScrollView, SpinBox } from "std-widgets.slint";
 
 export struct InterfaceInfo {
     name: string,
@@ -30,11 +30,7 @@ export struct MailAccountRow {
     display-name: string,
 }
 
-export component MainWindow inherits Window {
-    title: "PocketServer";
-    preferred-width: 980px;
-    preferred-height: 680px;
-
+export global AppState {
     in-out property <string> status-line: "";
 
     // On Android 12+ this gets overwritten at startup with the device's
@@ -42,6 +38,12 @@ export component MainWindow inherits Window {
     // src/android_colors.rs); this default is what desktop and older
     // Android show instead.
     in-out property <color> dynamic-accent: #b3261e;
+
+    // Set once at startup on Android only, so the in-app "Start daemon"
+    // card only shows up where it's actually needed (desktop runs the
+    // daemon as a separate process the usual way).
+    in-out property <bool> is-android: false;
+    in-out property <string> daemon-status-text: "";
 
     // Gateway
     in-out property <[InterfaceInfo]> interfaces: [];
@@ -86,157 +88,307 @@ export component MainWindow inherits Window {
     callback save-mail();
     callback add-mail-account();
     callback delete-mail-account(string);
+    callback start-daemon();
+}
 
-    VerticalBox {
+component Card inherits Rectangle {
+    background: #211e28;
+    border-radius: 16px;
+    VerticalLayout {
+        padding: 16px;
+        spacing: 10px;
+        @children
+    }
+}
+
+component SectionLabel inherits Text {
+    font-size: 13px;
+    font-weight: 700;
+    color: #b8b2c4;
+}
+
+component EmptyHint inherits Text {
+    font-size: 12px;
+    color: #77718a;
+}
+
+component ItemCard inherits Rectangle {
+    background: #2a2632;
+    border-radius: 12px;
+    VerticalLayout {
         padding: 12px;
+        spacing: 4px;
+        @children
+    }
+}
 
+component ItemTitle inherits Text {
+    font-size: 15px;
+    font-weight: 700;
+    color: white;
+}
+
+component ItemDetail inherits Text {
+    font-size: 12px;
+    color: #9c96a8;
+    wrap: word-wrap;
+}
+
+component NavItem inherits Rectangle {
+    in property <string> icon;
+    in property <string> label;
+    in property <bool> selected;
+    callback clicked();
+
+    border-radius: 14px;
+    background: root.selected ? #3a3450 : transparent;
+
+    TouchArea {
+        clicked => { root.clicked(); }
+    }
+
+    VerticalLayout {
+        padding: 8px;
+        spacing: 2px;
+        alignment: center;
+        Text {
+            text: root.icon;
+            font-size: 20px;
+            horizontal-alignment: center;
+            color: root.selected ? AppState.dynamic-accent : #9c96a8;
+        }
+        Text {
+            text: root.label;
+            font-size: 11px;
+            horizontal-alignment: center;
+            color: root.selected ? white : #9c96a8;
+        }
+    }
+}
+
+component GatewayPage inherits VerticalLayout {
+    spacing: 16px;
+
+    Card {
+        SectionLabel { text: "Dynamic DNS"; }
+        HorizontalLayout {
+            spacing: 8px;
+            CheckBox { text: "Enable sync"; checked <=> AppState.dynv6-enabled; }
+            Button { text: "Refresh"; clicked => { AppState.refresh-interfaces(); } }
+        }
+        HorizontalLayout {
+            spacing: 8px;
+            Text { text: "Interface"; vertical-alignment: center; color: #cfc9da; }
+            ComboBox {
+                model: AppState.interface-names;
+                current-value <=> AppState.dynv6-interface;
+            }
+        }
+        LineEdit { placeholder-text: "dynv6 token"; text <=> AppState.dynv6-token; }
+        LineEdit { placeholder-text: "domains, comma separated"; text <=> AppState.dynv6-domains-text; }
+        HorizontalLayout {
+            spacing: 8px;
+            Button { text: "Save"; clicked => { AppState.save-dynv6(); } }
+            Button { text: "Sync now"; clicked => { AppState.sync-dynv6-now(); } }
+        }
+        ItemDetail { text: AppState.dynv6-status-text; }
+    }
+
+    if AppState.is-android: Card {
+        SectionLabel { text: "Daemon"; }
+        ItemDetail { text: AppState.daemon-status-text; }
+        Button { text: "Start daemon"; clicked => { AppState.start-daemon(); } }
+    }
+
+    Card {
+        SectionLabel { text: "Detected interfaces"; }
+        if AppState.interfaces.length == 0: EmptyHint { text: "No interfaces detected yet."; }
+        for iface in AppState.interfaces: ItemCard {
+            ItemTitle { text: iface.name; }
+            ItemDetail { text: "MAC " + iface.mac; }
+            ItemDetail { text: "IPv4 " + iface.ipv4; }
+            ItemDetail { text: "IPv6 " + iface.ipv6; }
+        }
+    }
+}
+
+component RouterPage inherits VerticalLayout {
+    spacing: 16px;
+
+    Card {
+        SectionLabel { text: "New route"; }
+        LineEdit { placeholder-text: "subdomain, e.g. cloud.example.com"; text <=> AppState.new-subdomain; }
+        HorizontalLayout {
+            spacing: 8px;
+            CheckBox { text: "Static folder"; checked <=> AppState.new-is-static; }
+            CheckBox { text: "TLS"; checked <=> AppState.new-tls; }
+        }
+        LineEdit { placeholder-text: "folder path"; text <=> AppState.new-path; enabled: AppState.new-is-static; }
+        HorizontalLayout {
+            spacing: 8px;
+            Text { text: "Local port"; vertical-alignment: center; color: #cfc9da; }
+            SpinBox { value <=> AppState.new-port; minimum: 1; maximum: 65535; enabled: !AppState.new-is-static; }
+        }
+        Button { text: "Add route"; clicked => { AppState.add-route(); } }
+    }
+
+    Card {
+        SectionLabel { text: "Routes"; }
+        if AppState.routes.length == 0: EmptyHint { text: "No routes yet."; }
+        for r in AppState.routes: ItemCard {
+            HorizontalLayout {
+                ItemTitle { text: r.subdomain; horizontal-stretch: 1; }
+                if r.tls: Text { text: "TLS"; color: AppState.dynamic-accent; font-size: 11px; font-weight: 700; vertical-alignment: center; }
+            }
+            ItemDetail { text: r.is-static ? "Static: " + r.path : "Port " + r.port; }
+            Button { text: "Delete"; clicked => { AppState.delete-route(r.id); } }
+        }
+    }
+
+    Button { text: "Apply changes"; clicked => { AppState.apply(); } }
+}
+
+component SecurityPage inherits VerticalLayout {
+    spacing: 16px;
+
+    Card {
+        SectionLabel { text: "New raw TCP/UDP rule"; }
+        LineEdit { placeholder-text: "name, e.g. minecraft"; text <=> AppState.new-l4-name; }
+        CheckBox { text: "UDP (unchecked = TCP)"; checked <=> AppState.new-l4-udp; }
+        HorizontalLayout {
+            spacing: 8px;
+            Text { text: "Listen port"; vertical-alignment: center; color: #cfc9da; }
+            SpinBox { value <=> AppState.new-l4-listen-port; minimum: 1; maximum: 65535; }
+        }
+        HorizontalLayout {
+            spacing: 8px;
+            Text { text: "Upstream port"; vertical-alignment: center; color: #cfc9da; }
+            SpinBox { value <=> AppState.new-l4-upstream-port; minimum: 1; maximum: 65535; }
+        }
+        Button { text: "Add rule"; clicked => { AppState.add-l4-rule(); } }
+    }
+
+    Card {
+        SectionLabel { text: "Rules"; }
+        if AppState.l4-rules.length == 0: EmptyHint { text: "No rules yet."; }
+        for rule in AppState.l4-rules: ItemCard {
+            ItemTitle { text: rule.name; }
+            ItemDetail { text: (rule.is-udp ? "UDP " : "TCP ") + rule.listen-port + " -> " + rule.upstream-port; }
+            Button { text: "Delete"; clicked => { AppState.delete-l4-rule(rule.id); } }
+        }
+    }
+
+    Card {
+        SectionLabel { text: "Blocked IPs"; }
+        LineEdit { placeholder-text: "comma separated"; text <=> AppState.blocked-ips-text; }
+    }
+
+    Button { text: "Save security config"; clicked => { AppState.save-security(); } }
+}
+
+component MailPage inherits VerticalLayout {
+    spacing: 16px;
+
+    Card {
+        SectionLabel { text: "Mail domain"; }
+        LineEdit { placeholder-text: "mail domain"; text <=> AppState.mail-domain; }
+    }
+
+    Card {
+        SectionLabel { text: "New account"; }
+        LineEdit { placeholder-text: "address"; text <=> AppState.new-mail-address; }
+        LineEdit { placeholder-text: "display name"; text <=> AppState.new-mail-display-name; }
+        Button { text: "Add account"; clicked => { AppState.add-mail-account(); } }
+    }
+
+    Card {
+        SectionLabel { text: "Accounts"; }
+        if AppState.mail-accounts.length == 0: EmptyHint { text: "No accounts yet."; }
+        for acct in AppState.mail-accounts: ItemCard {
+            ItemTitle { text: acct.address; }
+            ItemDetail { text: acct.display-name; }
+            Button { text: "Delete"; clicked => { AppState.delete-mail-account(acct.address); } }
+        }
+    }
+
+    Button { text: "Save mail config"; clicked => { AppState.save-mail(); } }
+}
+
+export component MainWindow inherits Window {
+    title: "PocketServer";
+    preferred-width: 900px;
+    preferred-height: 700px;
+    background: #15131a;
+
+    in-out property <int> current-page: 0;
+
+    // Driven by AppState.is-android (set once from Rust at startup) rather
+    // than root.width: window width in Slint is itself partly derived from
+    // content layout, so branching the whole layout shape on it created a
+    // real binding loop (root.compact -> layoutinfo-h -> root.width ->
+    // root.compact) that the compiler flagged as a runtime panic risk, not
+    // just a style nit. This also matches the actual bug report more
+    // directly -- Android should always get the compact/mobile layout,
+    // not just when its window happens to be narrow.
+    property <bool> compact: AppState.is-android;
+
+    VerticalLayout {
         Rectangle {
             height: 4px;
-            background: root.dynamic-accent;
+            background: AppState.dynamic-accent;
         }
 
-        Text {
-            text: root.status-line;
-            font-size: 12px;
-            color: #888;
+        if root.compact: VerticalLayout {
+            ScrollView {
+                vertical-stretch: 1;
+                VerticalLayout {
+                    padding: 16px;
+                    spacing: 16px;
+                    if AppState.status-line != "": ItemDetail { text: AppState.status-line; color: #e08a8a; }
+                    if root.current-page == 0: GatewayPage {}
+                    if root.current-page == 1: RouterPage {}
+                    if root.current-page == 2: SecurityPage {}
+                    if root.current-page == 3: MailPage {}
+                }
+            }
+            Rectangle {
+                height: 68px;
+                background: #1c1924;
+                HorizontalLayout {
+                    padding: 6px;
+                    spacing: 4px;
+                    NavItem { icon: "🌐"; label: "Gateway"; selected: root.current-page == 0; clicked => { root.current-page = 0; } }
+                    NavItem { icon: "🔀"; label: "Router"; selected: root.current-page == 1; clicked => { root.current-page = 1; } }
+                    NavItem { icon: "🛡"; label: "Security"; selected: root.current-page == 2; clicked => { root.current-page = 2; } }
+                    NavItem { icon: "✉"; label: "Mail"; selected: root.current-page == 3; clicked => { root.current-page = 3; } }
+                }
+            }
         }
 
-        TabWidget {
-            Tab {
-                title: "Gateway";
-                VerticalBox {
-                    HorizontalBox {
-                        CheckBox { text: "Enable dynv6 sync"; checked <=> root.dynv6-enabled; }
-                        Button { text: "Refresh interfaces"; clicked => { root.refresh-interfaces(); } }
-                    }
-                    HorizontalBox {
-                        Text { text: "Interface:"; vertical-alignment: center; }
-                        ComboBox {
-                            model: root.interface-names;
-                            current-value <=> root.dynv6-interface;
-                        }
-                    }
-                    LineEdit { placeholder-text: "dynv6 token"; text <=> root.dynv6-token; }
-                    LineEdit { placeholder-text: "dynv6 domains, comma separated"; text <=> root.dynv6-domains-text; }
-                    HorizontalBox {
-                        Button { text: "Save"; clicked => { root.save-dynv6(); } }
-                        Button { text: "Sync now"; clicked => { root.sync-dynv6-now(); } }
-                    }
-                    Text { text: root.dynv6-status-text; wrap: word-wrap; }
-                    GroupBox {
-                        title: "Detected interfaces";
-                        ScrollView {
-                            VerticalBox {
-                                for iface in root.interfaces: HorizontalBox {
-                                    Text { text: iface.name; width: 130px; }
-                                    Text { text: iface.mac; width: 150px; }
-                                    Text { text: iface.ipv4; width: 150px; }
-                                    Text { text: iface.ipv6; }
-                                }
-                            }
-                        }
-                    }
+        if !root.compact: HorizontalLayout {
+            Rectangle {
+                width: 110px;
+                background: #1c1924;
+                VerticalLayout {
+                    padding: 12px;
+                    spacing: 8px;
+                    alignment: start;
+                    NavItem { icon: "🌐"; label: "Gateway"; selected: root.current-page == 0; clicked => { root.current-page = 0; } }
+                    NavItem { icon: "🔀"; label: "Router"; selected: root.current-page == 1; clicked => { root.current-page = 1; } }
+                    NavItem { icon: "🛡"; label: "Security"; selected: root.current-page == 2; clicked => { root.current-page = 2; } }
+                    NavItem { icon: "✉"; label: "Mail"; selected: root.current-page == 3; clicked => { root.current-page = 3; } }
                 }
             }
-
-            Tab {
-                title: "App Router";
-                VerticalBox {
-                    GroupBox {
-                        title: "New route";
-                        VerticalBox {
-                            LineEdit { placeholder-text: "subdomain, e.g. cloud.example.com"; text <=> root.new-subdomain; }
-                            HorizontalBox {
-                                CheckBox { text: "Static folder (unchecked = local port)"; checked <=> root.new-is-static; }
-                                CheckBox { text: "TLS"; checked <=> root.new-tls; }
-                            }
-                            LineEdit { placeholder-text: "folder path"; text <=> root.new-path; enabled: root.new-is-static; }
-                            HorizontalBox {
-                                Text { text: "Local port:"; vertical-alignment: center; }
-                                SpinBox { value <=> root.new-port; minimum: 1; maximum: 65535; enabled: !root.new-is-static; }
-                            }
-                            Button { text: "Add route"; clicked => { root.add-route(); } }
-                        }
-                    }
-                    GroupBox {
-                        title: "Routes";
-                        ScrollView {
-                            VerticalBox {
-                                for r in root.routes: HorizontalBox {
-                                    Text { text: r.subdomain; width: 200px; }
-                                    Text { text: r.is-static ? r.path : "port " + r.port; width: 260px; wrap: word-wrap; }
-                                    Text { text: r.tls ? "TLS" : ""; width: 40px; }
-                                    Button { text: "Delete"; clicked => { root.delete-route(r.id); } }
-                                }
-                            }
-                        }
-                    }
-                    Button { text: "Apply (regenerate configs + restart services)"; clicked => { root.apply(); } }
-                }
-            }
-
-            Tab {
-                title: "Security Shield";
-                VerticalBox {
-                    GroupBox {
-                        title: "New raw TCP/UDP rule";
-                        VerticalBox {
-                            LineEdit { placeholder-text: "name, e.g. minecraft"; text <=> root.new-l4-name; }
-                            CheckBox { text: "UDP (unchecked = TCP)"; checked <=> root.new-l4-udp; }
-                            HorizontalBox {
-                                Text { text: "Listen port:"; vertical-alignment: center; }
-                                SpinBox { value <=> root.new-l4-listen-port; minimum: 1; maximum: 65535; }
-                            }
-                            HorizontalBox {
-                                Text { text: "Upstream port:"; vertical-alignment: center; }
-                                SpinBox { value <=> root.new-l4-upstream-port; minimum: 1; maximum: 65535; }
-                            }
-                            Button { text: "Add rule"; clicked => { root.add-l4-rule(); } }
-                        }
-                    }
-                    GroupBox {
-                        title: "Rules";
-                        ScrollView {
-                            VerticalBox {
-                                for rule in root.l4-rules: HorizontalBox {
-                                    Text { text: rule.name; width: 120px; }
-                                    Text { text: rule.is-udp ? "UDP" : "TCP"; width: 50px; }
-                                    Text { text: "" + rule.listen-port + " -> " + rule.upstream-port; width: 160px; }
-                                    Button { text: "Delete"; clicked => { root.delete-l4-rule(rule.id); } }
-                                }
-                            }
-                        }
-                    }
-                    LineEdit { placeholder-text: "blocked IPs, comma separated"; text <=> root.blocked-ips-text; }
-                    Button { text: "Save security config"; clicked => { root.save-security(); } }
-                }
-            }
-
-            Tab {
-                title: "Post Office";
-                VerticalBox {
-                    LineEdit { placeholder-text: "mail domain"; text <=> root.mail-domain; }
-                    GroupBox {
-                        title: "New account";
-                        HorizontalBox {
-                            LineEdit { placeholder-text: "address"; text <=> root.new-mail-address; }
-                            LineEdit { placeholder-text: "display name"; text <=> root.new-mail-display-name; }
-                            Button { text: "Add"; clicked => { root.add-mail-account(); } }
-                        }
-                    }
-                    GroupBox {
-                        title: "Accounts";
-                        ScrollView {
-                            VerticalBox {
-                                for acct in root.mail-accounts: HorizontalBox {
-                                    Text { text: acct.address; width: 220px; }
-                                    Text { text: acct.display-name; }
-                                    Button { text: "Delete"; clicked => { root.delete-mail-account(acct.address); } }
-                                }
-                            }
-                        }
-                    }
-                    Button { text: "Save mail config"; clicked => { root.save-mail(); } }
+            ScrollView {
+                horizontal-stretch: 1;
+                VerticalLayout {
+                    padding: 24px;
+                    spacing: 16px;
+                    if AppState.status-line != "": ItemDetail { text: AppState.status-line; color: #e08a8a; }
+                    if root.current-page == 0: GatewayPage {}
+                    if root.current-page == 1: RouterPage {}
+                    if root.current-page == 2: SecurityPage {}
+                    if root.current-page == 3: MailPage {}
                 }
             }
         }

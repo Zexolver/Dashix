@@ -1,0 +1,233 @@
+import { Button, CheckBox, ComboBox, GroupBox, LineEdit, ScrollView, SpinBox, TabWidget, VerticalBox, HorizontalBox } from "std-widgets.slint";
+
+export struct InterfaceInfo {
+    name: string,
+    mac: string,
+    ipv4: string,
+    ipv6: string,
+}
+
+export struct RouteRow {
+    id: string,
+    subdomain: string,
+    is-static: bool,
+    path: string,
+    port: int,
+    tls: bool,
+    internal-port: int,
+}
+
+export struct L4RuleRow {
+    id: string,
+    name: string,
+    is-udp: bool,
+    listen-port: int,
+    upstream-port: int,
+}
+
+export struct MailAccountRow {
+    address: string,
+    display-name: string,
+}
+
+export component MainWindow inherits Window {
+    title: "PocketServer";
+    preferred-width: 980px;
+    preferred-height: 680px;
+
+    in-out property <string> status-line: "";
+
+    // Gateway
+    in-out property <[InterfaceInfo]> interfaces: [];
+    in-out property <[string]> interface-names: [];
+    in-out property <bool> dynv6-enabled: false;
+    in-out property <string> dynv6-token: "";
+    in-out property <string> dynv6-interface: "";
+    in-out property <string> dynv6-domains-text: "";
+    in-out property <string> dynv6-status-text: "";
+
+    // App Router
+    in-out property <[RouteRow]> routes: [];
+    in-out property <string> new-subdomain: "";
+    in-out property <bool> new-is-static: true;
+    in-out property <string> new-path: "";
+    in-out property <int> new-port: 8080;
+    in-out property <bool> new-tls: false;
+
+    // Security Shield
+    in-out property <[L4RuleRow]> l4-rules: [];
+    in-out property <string> new-l4-name: "";
+    in-out property <bool> new-l4-udp: false;
+    in-out property <int> new-l4-listen-port: 25565;
+    in-out property <int> new-l4-upstream-port: 25566;
+    in-out property <string> blocked-ips-text: "";
+
+    // Post Office
+    in-out property <string> mail-domain: "";
+    in-out property <[MailAccountRow]> mail-accounts: [];
+    in-out property <string> new-mail-address: "";
+    in-out property <string> new-mail-display-name: "";
+
+    callback refresh-interfaces();
+    callback save-dynv6();
+    callback sync-dynv6-now();
+    callback add-route();
+    callback delete-route(string);
+    callback apply();
+    callback save-security();
+    callback add-l4-rule();
+    callback delete-l4-rule(string);
+    callback save-mail();
+    callback add-mail-account();
+    callback delete-mail-account(string);
+
+    VerticalBox {
+        padding: 12px;
+
+        Text {
+            text: root.status-line;
+            font-size: 12px;
+            color: #888;
+        }
+
+        TabWidget {
+            Tab {
+                title: "Gateway";
+                VerticalBox {
+                    HorizontalBox {
+                        CheckBox { text: "Enable dynv6 sync"; checked <=> root.dynv6-enabled; }
+                        Button { text: "Refresh interfaces"; clicked => { root.refresh-interfaces(); } }
+                    }
+                    HorizontalBox {
+                        Text { text: "Interface:"; vertical-alignment: center; }
+                        ComboBox {
+                            model: root.interface-names;
+                            current-value <=> root.dynv6-interface;
+                        }
+                    }
+                    LineEdit { placeholder-text: "dynv6 token"; text <=> root.dynv6-token; }
+                    LineEdit { placeholder-text: "dynv6 domains, comma separated"; text <=> root.dynv6-domains-text; }
+                    HorizontalBox {
+                        Button { text: "Save"; clicked => { root.save-dynv6(); } }
+                        Button { text: "Sync now"; clicked => { root.sync-dynv6-now(); } }
+                    }
+                    Text { text: root.dynv6-status-text; wrap: word-wrap; }
+                    GroupBox {
+                        title: "Detected interfaces";
+                        ScrollView {
+                            VerticalBox {
+                                for iface in root.interfaces: HorizontalBox {
+                                    Text { text: iface.name; width: 130px; }
+                                    Text { text: iface.mac; width: 150px; }
+                                    Text { text: iface.ipv4; width: 150px; }
+                                    Text { text: iface.ipv6; }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Tab {
+                title: "App Router";
+                VerticalBox {
+                    GroupBox {
+                        title: "New route";
+                        VerticalBox {
+                            LineEdit { placeholder-text: "subdomain, e.g. cloud.example.com"; text <=> root.new-subdomain; }
+                            HorizontalBox {
+                                CheckBox { text: "Static folder (unchecked = local port)"; checked <=> root.new-is-static; }
+                                CheckBox { text: "TLS"; checked <=> root.new-tls; }
+                            }
+                            LineEdit { placeholder-text: "folder path"; text <=> root.new-path; enabled: root.new-is-static; }
+                            HorizontalBox {
+                                Text { text: "Local port:"; vertical-alignment: center; }
+                                SpinBox { value <=> root.new-port; minimum: 1; maximum: 65535; enabled: !root.new-is-static; }
+                            }
+                            Button { text: "Add route"; clicked => { root.add-route(); } }
+                        }
+                    }
+                    GroupBox {
+                        title: "Routes";
+                        ScrollView {
+                            VerticalBox {
+                                for r in root.routes: HorizontalBox {
+                                    Text { text: r.subdomain; width: 200px; }
+                                    Text { text: r.is-static ? r.path : "port " + r.port; width: 260px; wrap: word-wrap; }
+                                    Text { text: r.tls ? "TLS" : ""; width: 40px; }
+                                    Button { text: "Delete"; clicked => { root.delete-route(r.id); } }
+                                }
+                            }
+                        }
+                    }
+                    Button { text: "Apply (regenerate configs + restart services)"; clicked => { root.apply(); } }
+                }
+            }
+
+            Tab {
+                title: "Security Shield";
+                VerticalBox {
+                    GroupBox {
+                        title: "New raw TCP/UDP rule";
+                        VerticalBox {
+                            LineEdit { placeholder-text: "name, e.g. minecraft"; text <=> root.new-l4-name; }
+                            CheckBox { text: "UDP (unchecked = TCP)"; checked <=> root.new-l4-udp; }
+                            HorizontalBox {
+                                Text { text: "Listen port:"; vertical-alignment: center; }
+                                SpinBox { value <=> root.new-l4-listen-port; minimum: 1; maximum: 65535; }
+                            }
+                            HorizontalBox {
+                                Text { text: "Upstream port:"; vertical-alignment: center; }
+                                SpinBox { value <=> root.new-l4-upstream-port; minimum: 1; maximum: 65535; }
+                            }
+                            Button { text: "Add rule"; clicked => { root.add-l4-rule(); } }
+                        }
+                    }
+                    GroupBox {
+                        title: "Rules";
+                        ScrollView {
+                            VerticalBox {
+                                for rule in root.l4-rules: HorizontalBox {
+                                    Text { text: rule.name; width: 120px; }
+                                    Text { text: rule.is-udp ? "UDP" : "TCP"; width: 50px; }
+                                    Text { text: "" + rule.listen-port + " -> " + rule.upstream-port; width: 160px; }
+                                    Button { text: "Delete"; clicked => { root.delete-l4-rule(rule.id); } }
+                                }
+                            }
+                        }
+                    }
+                    LineEdit { placeholder-text: "blocked IPs, comma separated"; text <=> root.blocked-ips-text; }
+                    Button { text: "Save security config"; clicked => { root.save-security(); } }
+                }
+            }
+
+            Tab {
+                title: "Post Office";
+                VerticalBox {
+                    LineEdit { placeholder-text: "mail domain"; text <=> root.mail-domain; }
+                    GroupBox {
+                        title: "New account";
+                        HorizontalBox {
+                            LineEdit { placeholder-text: "address"; text <=> root.new-mail-address; }
+                            LineEdit { placeholder-text: "display name"; text <=> root.new-mail-display-name; }
+                            Button { text: "Add"; clicked => { root.add-mail-account(); } }
+                        }
+                    }
+                    GroupBox {
+                        title: "Accounts";
+                        ScrollView {
+                            VerticalBox {
+                                for acct in root.mail-accounts: HorizontalBox {
+                                    Text { text: acct.address; width: 220px; }
+                                    Text { text: acct.display-name; }
+                                    Button { text: "Delete"; clicked => { root.delete-mail-account(acct.address); } }
+                                }
+                            }
+                        }
+                    }
+                    Button { text: "Save mail config"; clicked => { root.save-mail(); } }
+                }
+            }
+        }
+    }
+}

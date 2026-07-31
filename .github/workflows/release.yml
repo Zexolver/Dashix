@@ -54,7 +54,15 @@ jobs:
       # doesn't silently start failing, or silently start using a
       # different NDK/SDK version than what's actually been verified to
       # work here, if the runner image changes.
+      #
+      # ANDROID_SDK_ROOT has to be set alongside ANDROID_HOME: ubuntu-latest
+      # runners come with their own preinstalled SDK and set ANDROID_SDK_ROOT
+      # to it, and ndk-build (what cargo-apk uses) checks ANDROID_SDK_ROOT
+      # first -- confirmed by reproducing this exact failure ("Android SDK
+      # has no build tools") in a container with ANDROID_SDK_ROOT pointing
+      # elsewhere while ANDROID_HOME pointed here.
       ANDROID_HOME: ${{ github.workspace }}/.android-sdk
+      ANDROID_SDK_ROOT: ${{ github.workspace }}/.android-sdk
       ANDROID_NDK_ROOT: ${{ github.workspace }}/.android-sdk/ndk/r27c
       ANDROID_BUILD_TOOLS_VERSION: "35.0.0"
     steps:
